@@ -177,7 +177,7 @@ def generate_grid_basis(grid_size=32, n_dims=3, minv=-1.0, maxv=1.0):
     return basis
 
 
-def encode(x, bps_arrangement='random', n_bps_points=512, radius=1.5, bps_cell_type='dists', return_idx=False, nn_algo="ball_tree",
+def encode(x, bps_arrangement='random', n_bps_points=512, radius=1.5, bps_cell_type='dists', return_idx=False, nn_algo="kd_tree",
            leaf_size=16, verbose=1, random_seed=13, x_features=None, custom_basis=None, n_jobs=-1):
     """Converts point clouds to basis point set (BPS) representation, multi-processing version
 
