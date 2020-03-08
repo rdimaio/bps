@@ -158,7 +158,7 @@ def generate_grid_basis(grid_size=32, n_dims=3, minv=-1.0, maxv=1.0):
     Parameters
     ----------
     grid_size: int
-        number of elements in each grid axe
+        number of elements in each grid axis
     minv: float
         minimum element of the grid
     maxv
@@ -177,8 +177,8 @@ def generate_grid_basis(grid_size=32, n_dims=3, minv=-1.0, maxv=1.0):
     return basis
 
 
-def encode(x, bps_arrangement='random', n_bps_points=512, radius=1.5, bps_cell_type='dists',
-           verbose=1, random_seed=13, x_features=None, custom_basis=None, n_jobs=-1):
+def encode(x, bps_arrangement='random', n_bps_points=512, radius=1.5, bps_cell_type='dists', return_idx=False, nn_algo="ball_tree",
+           leaf_size=16, verbose=1, random_seed=13, x_features=None, custom_basis=None, n_jobs=-1):
     """Converts point clouds to basis point set (BPS) representation, multi-processing version
 
     Parameters
@@ -198,6 +198,17 @@ def encode(x, bps_arrangement='random', n_bps_points=512, radius=1.5, bps_cell_t
             'closest': closest point itself
             'features': return features of the closest point supplied by x_features.
                         e.g. RGB values of points, surface normals, etc.
+    return_idx: boolean
+        whether to return the indexes of the sampled points.
+    nn_algo: str
+        what algorithm to use to compute nearest neighbor searches. Supported (from sklearn docs):
+            'ball_tree': will use :class:`BallTree`
+            'kd_tree': will use :class:`KDTree`
+            'brute': will use a brute-force search.
+            'auto': will attempt to decide the most appropriate algorithm
+                    based on the values passed to :meth:`fit` method.
+    leaf_size: int
+        leaf size of the decision tree.
     verbose: boolean
         whether to show conversion progress
     x_features: numpy array [n_clouds, n_points, n_features]
@@ -211,6 +222,8 @@ def encode(x, bps_arrangement='random', n_bps_points=512, radius=1.5, bps_cell_t
     -------
     x_bps: [n_clouds, n_points, n_bps_features]
         point clouds converted to BPS representation.
+    idx_bps: [n_clouds, n_points] (only returned if return_idx=True)
+        indexes of the points sampled by the BPS encoding.
     """
 
     if n_jobs == -1:
@@ -250,11 +263,13 @@ def encode(x, bps_arrangement='random', n_bps_points=512, radius=1.5, bps_cell_t
             raise ValueError("Invalid cell type. Supported types: \'dists\', \'deltas\', \'closest\', \'features\'")
         fid_lst = range(0, x.shape[0])
 
+        idx_bps = np.zeros([n_clouds, n_bps_points])
+        
         if verbose:
             fid_lst = tqdm(fid_lst)
 
         for fid in fid_lst:
-            nbrs = NearestNeighbors(n_neighbors=1, leaf_size=1, algorithm="ball_tree").fit(x[fid])
+            nbrs = NearestNeighbors(n_neighbors=1, leaf_size=leaf_size, algorithm=nn_algo).fit(x[fid])
             fid_dist, npts_ix = nbrs.kneighbors(basis_set)
             if bps_cell_type == 'dists':
                 x_bps[fid] = fid_dist.squeeze()
@@ -264,21 +279,40 @@ def encode(x, bps_arrangement='random', n_bps_points=512, radius=1.5, bps_cell_t
                 x_bps[fid] = x[fid][npts_ix].squeeze()
             elif bps_cell_type == 'features':
                 x_bps[fid] = x_features[fid][npts_ix].squeeze()
+            # Store index of sampled point in idx_bps
+            # This is done even when return_idx=False;
+            # Using if statements here slows down BPS encoding by a few seconds
+            # (more noticeable for large point clouds)
+            idx_bps[fid] = npts_ix.squeeze()
 
-        return x_bps
+        if return_idx:
+            return x_bps, idx_bps
+        else:
+            return x_bps
 
     else:
-
+        
         if verbose:
             print("using %d available CPUs for BPS encoding.." % n_jobs)
-
+        
         bps_encode_func = partial(encode, bps_arrangement=bps_arrangement, n_bps_points=n_bps_points, radius=radius,
-                                  bps_cell_type=bps_cell_type, verbose=verbose, random_seed=random_seed,
-                                  x_features=x_features, custom_basis=custom_basis, n_jobs=1)
+                                  bps_cell_type=bps_cell_type, verbose=verbose, leaf_size=leaf_size, random_seed=random_seed, return_idx=return_idx,
+                                  x_features=x_features, custom_basis=custom_basis, n_jobs=1, nn_algo=nn_algo)
 
         pool = multiprocessing.Pool(n_jobs)
         x_chunks = np.array_split(x, n_jobs)
-        x_bps = np.concatenate(pool.map(bps_encode_func, x_chunks), 0)
+
+        if return_idx:
+            x_bps, idx_bps = zip(*pool.map(bps_encode_func, x_chunks))
+            x_bps = np.concatenate(x_bps, 0)
+            idx_bps = np.concatenate(idx_bps, 0)
+            idx_bps = idx_bps.astype('uint16')
+        else:
+            x_bps = np.concatenate(pool.map(bps_encode_func, x_chunks), 0)
+        
         pool.close()
 
-        return x_bps
+        if return_idx:
+            return x_bps, idx_bps
+        else:
+            return x_bps

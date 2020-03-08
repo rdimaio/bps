@@ -42,7 +42,7 @@ challenge.
 
 
 ```
-pip3 install git+https://github.com/sergeyprokudin/bps
+pip3 install git+https://github.com/rdimaio/sembps
 ```
 
 ### Code snippet
